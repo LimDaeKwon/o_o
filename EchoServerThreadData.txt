@@ -1,0 +1,10 @@
+:SERVER
+{
+IP:0.0.0.0
+PORT:6000
+WorkerNum:8
+Concurrent:22
+Option:0
+Max:200
+Header:2
+}
