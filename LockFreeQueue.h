@@ -53,8 +53,6 @@ private:
 public:
 	TLockFreeQueue() //: NodeFreeList(0)
 	{
-		std::cout << "TLockFreeQueue 생성자 함수" << std::endl;
-
 		Node* DummyNode = NodeFreeList.Alloc();
 		DummyNode->Next = nullptr;
 		Head = DummyNode;
@@ -100,6 +98,7 @@ public:
 		unsigned long QueueSize = InterlockedIncrement(&Size);
 		if (MAXQSIZE < QueueSize)
 		{
+			InterlockedDecrement(&Size);
 			return false;
 		}
 
@@ -163,6 +162,7 @@ public:
 			{
 				continue;
 			}
+			//AdvanceTailToNull();
 
 			Node* DataNode = UnMaskTag((unsigned long long)NewHead);
 			*data = DataNode->Data;
@@ -212,17 +212,22 @@ public:
 		LogBuffer[LogIndex].Cookie3 = Cookie;
 	}
 
+	long GetSize()
+	{
+		return Size;
+	}
 
 
+	
 private:
 
 	static TLSObjectFreeList<Node> NodeFreeList;
 
 	//TLSObjectFreeList<Node> NodeFreeList;
-	alignas(64)Node* Head;
-	alignas(64)Node* Tail;
-
+	Node* Head;
+	Node* Tail;
 	long Size = 0;
+	
 };
 
 

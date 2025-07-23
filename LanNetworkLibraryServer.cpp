@@ -42,7 +42,8 @@ struct BufferCount
 
 struct Session
 {
-	CPacketQueue send_buffer;
+	TLockFreeQueue<CPacket*> send_buffer;
+
 	MyOverlapped send_overlapped;
 
 	MyOverlapped recv_overlapped;
@@ -58,7 +59,6 @@ struct Session
 	long send_count; // sendTPS용
 	BufferCount buffer_count; // 직렬화버퍼 지우기용.
 
-	__int64 release_flag;
 
 	int* index;//인덱스 저장용
 
@@ -111,7 +111,7 @@ unsigned int __stdcall LanNetworkLibraryServer::AcceptThread(LPVOID this_ptr)
 		new_session->session_id = this_for_Accept->unique_id++;
 
 		new_session->session_id |= (i << 48);
-		new_session->release_flag = new_session->session_id;
+		//new_session->release_flag = new_session->session_id;
 		new_session->buffer_count.count = 0;
 		new_session->sock = client_sock;
 		new_session->send_flag = FALSE;
@@ -214,15 +214,15 @@ unsigned int __stdcall LanNetworkLibraryServer::WorkerThread(LPVOID this_ptr)
 		{
 			target->recv_buffer.MoveRear(cbTransferred);
 
-			EnterCriticalSection(&target->enqueue_lock);
+			//EnterCriticalSection(&target->enqueue_lock);
 
 			
 			if (!this_for_worker->RecvProc(target))
 			{
-				LeaveCriticalSection(&target->enqueue_lock);
+				//LeaveCriticalSection(&target->enqueue_lock);
 				continue;
 			}
-			LeaveCriticalSection(&target->enqueue_lock);
+			//LeaveCriticalSection(&target->enqueue_lock);
 
 
 			if (!this_for_worker->Receive(target))
@@ -238,7 +238,7 @@ unsigned int __stdcall LanNetworkLibraryServer::WorkerThread(LPVOID this_ptr)
 		if (overlap_ptr->Type == SEND)
 		{
 
-			EnterCriticalSection(&target->enqueue_lock);
+			//EnterCriticalSection(&target->enqueue_lock);
 
 			for (int i = 0; i < target->buffer_count.count; ++i)
 			{
@@ -255,11 +255,11 @@ unsigned int __stdcall LanNetworkLibraryServer::WorkerThread(LPVOID this_ptr)
 			
 			if (!this_for_worker->SendPost(target))
 			{
-				LeaveCriticalSection(&target->enqueue_lock);
+				//LeaveCriticalSection(&target->enqueue_lock);
 
 				continue;
 			}
-			LeaveCriticalSection(&target->enqueue_lock);
+			//LeaveCriticalSection(&target->enqueue_lock);
 
 		}
 
@@ -571,7 +571,7 @@ bool LanNetworkLibraryServer::SendPacket(__int64 session_ID, ContentsCPacket sen
 	{
 		//인큐 불가 상태.
 		wprintf(L"EnqueueFail in SendPacketUnicast Session Id : %lld\n", target->session_id);
-		//DebugBreak();
+		DebugBreak();
 		//__int64 init_flag = InterlockedCompareExchange64(&target->release_flag, session_ID, 1);
 
 
@@ -584,10 +584,6 @@ bool LanNetworkLibraryServer::SendPacket(__int64 session_ID, ContentsCPacket sen
 	{
 		return false;
 	}
-
-
-	//return true;
-//}
 
 	return false;
 }
@@ -627,10 +623,12 @@ bool LanNetworkLibraryServer::SendPost(Session* target)
 		if (buf_count == 0)
 		{
 			InterlockedExchange8((char*)&target->send_flag, 0);
+			if (target->send_buffer.GetSize() != 0)
+			{
+				SendPost(target);
+			}
 			return true;
 		}
-
-		InterlockedIncrement64(&buf_count_total[buf_count-1][0]);
 
 
 		
@@ -853,28 +851,6 @@ bool LanNetworkLibraryServer::AddHeader(CPacket* packet_buffer)
 	return false;
 }
 
-void LanNetworkLibraryServer::ReleasePTR(Session* target)
-{
-	__int64 is_delete_id = target->session_id;
-
-	closesocket(target->sock);
-
-	target->recv_buffer.ClearBuffer();
-	target->send_buffer.ClearBuffer();
-
-
-	index_list.Free(target->index);
-
-
-	InterlockedExchange8((char*)&target->use_flag, 0);
-
-	InterlockedDecrement(&session_num);
-
-
-	OnRelease(is_delete_id);
-
-}
-
 void LanNetworkLibraryServer::Release(Session* target)
 {
 	__int64 is_delete_id = target->session_id;
@@ -894,7 +870,26 @@ void LanNetworkLibraryServer::Release(Session* target)
 	closesocket(target->sock);
 
 	target->recv_buffer.ClearBuffer();
-	target->send_buffer.ClearBuffer();
+
+	while (1)
+	{
+		CPacket* t;
+
+		if (target->send_buffer.Dequeue(&t) == false)
+		{
+			break;
+		}
+
+		if (t->DecreaseRefCount() == 0)
+		{
+
+			CPacket::Free(t);
+
+		}
+
+	}
+
+	//target->send_buffer.ClearBuffer();
 
 
 

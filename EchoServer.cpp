@@ -45,22 +45,12 @@ void EchoServer::OnMessage(__int64 session_ID, ContentsCPacket contents_send_pac
 	//여기서 그냥 쏘자
 	
 	//CPacket* packet_echo = serialize_list.Alloc();
-	LARGE_INTEGER Start;
-	LARGE_INTEGER End;
-	QueryPerformanceCounter(&Start);
 
 	ContentsCPacket packet_echo = ContentsCPacket::MakeContentsPacket();
 
 
-	//CPacket* packet_echo = CPacket::Alloc();
-
-	//CPacket* packet_echo = new CPacket;
-
-	QueryPerformanceCounter(&End);
-	InterlockedAdd64(&alloc_call_time, End.QuadPart - Start.QuadPart);
-	InterlockedIncrement(&alloc_call);
 	packet_echo << data;
-	//packet_echo->IncreaseRefCount();
+
 	SendPacket(session_ID, packet_echo);
 
 
