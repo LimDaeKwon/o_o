@@ -1,7 +1,6 @@
 구현해야 할 것 7/23
 
-PacketQueue -> LockFreeQueue 변경 - 진행중
-
+PacketQueue -> LockFreeQueue 변경 - 완료 // [#구현 과정](https://github.com/LimDaeKwon/o_o/issues/1) 
 
 Disconnect 구현(컨텐츠에서 끊기)
 
