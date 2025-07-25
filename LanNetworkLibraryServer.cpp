@@ -38,7 +38,7 @@ struct BufferCount
 	long count;
 };
 
-
+#define RELEASEFLAG 0x80000000
 
 struct Session
 {
@@ -53,7 +53,7 @@ struct Session
 
 	SOCKET sock;
 	__int64 session_id;
-	bool use_flag;
+	bool disconnect_flag;
 	bool send_flag;
 	long io_count;
 	long send_count; // sendTPS용
@@ -107,11 +107,8 @@ unsigned int __stdcall LanNetworkLibraryServer::AcceptThread(LPVOID this_ptr)
 		}
 
 
-
 		new_session->session_id = this_for_Accept->unique_id++;
-
 		new_session->session_id |= (i << 48);
-		//new_session->release_flag = new_session->session_id;
 		new_session->buffer_count.count = 0;
 		new_session->sock = client_sock;
 		new_session->send_flag = FALSE;
@@ -119,13 +116,9 @@ unsigned int __stdcall LanNetworkLibraryServer::AcceptThread(LPVOID this_ptr)
 		new_session->recv_overlapped.Type = RECV;
 		new_session->send_overlapped.Type = SEND;
 
-		InterlockedExchange8((char*)&new_session->use_flag, 1);
-
 		InterlockedIncrement(&this_for_Accept->accept_count);
 
-
 		CreateIoCompletionPort((HANDLE)client_sock, this_for_Accept->handle_iocp, (ULONG_PTR)&this_for_Accept->session_array[i], 0);
-
 
 		sockaddr_in clientaddr;
 		int addr_len = sizeof(clientaddr);
@@ -145,10 +138,7 @@ unsigned int __stdcall LanNetworkLibraryServer::AcceptThread(LPVOID this_ptr)
 		
 		this_for_Accept->ReceiveFirst(new_session);
 
-
 	}
-
-
 
 	return 0;
 }
@@ -183,7 +173,6 @@ unsigned int __stdcall LanNetworkLibraryServer::WorkerThread(LPVOID this_ptr)
 				if (InterlockedDecrement(&target->io_count) == 0)
 				{
 					this_for_worker->Release(target);
-					continue;
 				}
 				continue;
 			}
@@ -212,34 +201,19 @@ unsigned int __stdcall LanNetworkLibraryServer::WorkerThread(LPVOID this_ptr)
 
 		if (overlap_ptr->Type == RECV)
 		{
-			target->recv_buffer.MoveRear(cbTransferred);
-
-			//EnterCriticalSection(&target->enqueue_lock);
-
-			
+			target->recv_buffer.MoveRear(cbTransferred);	
 			if (!this_for_worker->RecvProc(target))
 			{
-				//LeaveCriticalSection(&target->enqueue_lock);
 				continue;
 			}
-			//LeaveCriticalSection(&target->enqueue_lock);
-
-
 			if (!this_for_worker->Receive(target))
 			{
 				continue;
 			}
-
-
-			
-
 		}
 
 		if (overlap_ptr->Type == SEND)
 		{
-
-			//EnterCriticalSection(&target->enqueue_lock);
-
 			for (int i = 0; i < target->buffer_count.count; ++i)
 			{
 				if (target->buffer_count.buffers[i]->DecreaseRefCount() == 0)
@@ -255,11 +229,8 @@ unsigned int __stdcall LanNetworkLibraryServer::WorkerThread(LPVOID this_ptr)
 			
 			if (!this_for_worker->SendPost(target))
 			{
-				//LeaveCriticalSection(&target->enqueue_lock);
-
 				continue;
 			}
-			//LeaveCriticalSection(&target->enqueue_lock);
 
 		}
 
@@ -307,7 +278,7 @@ unsigned int __stdcall LanNetworkLibraryServer::MonitorThread(LPVOID this_ptr)
 LanNetworkLibraryServer::LanNetworkLibraryServer()
 	: accept_TPS(0), recv_message_TPS(0), send_message_TPS(0), accept_count(0),
 	recv_message_count(0), send_message_count(0), max_session(0), session_num(0), threads_num(0), unique_id(0),
-	index_list(0, false), recv_time(0), send_proc_time(0), recv_call(0), send_proc_call(0),send_call(0),send_call_time(0)
+	index_list(0, false)
 	
 {
 	for (int i = 0; i < 200; i++)
@@ -339,7 +310,6 @@ bool LanNetworkLibraryServer::Start(const char* server_IP, unsigned int  server_
 	for (unsigned int i = 0; i < max_session; ++i)
 	{
 		InitializeCriticalSection(&session_array[i].enqueue_lock);
-		session_array[i].use_flag = 0;
 		session_array[i].send_count = 0;
 		temp[i] = index_list.Alloc();
 		*temp[i] = i;
@@ -509,39 +479,48 @@ bool LanNetworkLibraryServer::Disconnect(__int64 session_ID)
 	unsigned int i = FindSession(session_ID);
 	target = &session_array[i];
 
-	//__int64 release_return = InterlockedCompareExchange64(&target->release_flag, 2, session_ID);
 
+	int local_count = InterlockedIncrement(&target->io_count);
 
-	//if (release_return == session_ID)
-	//{
-	//	closesocket(target->sock);
-	//	return true;
-	//}
+	if ((local_count & RELEASEFLAG) == RELEASEFLAG)
+	{
+		if (InterlockedDecrement(&target->io_count) == 0)
+		{
+			Release(target);
+		}
+		return false;
+	}
 
-	//if (!(target->session_id == session_ID))
-	//{
-	//	return false;
-	//}
+	//이러면 해제 이후 다시 재사용 된 상태. 다시 카운트 감소시키고 리턴시키기. 
+	if (target->session_id != session_ID)
+	{
+		//근데 생각해보니 재사용되었고 또 삭제되어야 했을 수도 있음. 
+		//목적과 다른 녀석이지만 얘도 내가 증가시켰으므로 감소 후 지워주기. 
+		if (InterlockedDecrement(&target->io_count) == 0)
+		{
+			Release(target);
+		}
+		return false;
+	}
 
-	//if (release_return == 0)
-	//{
+	// Disconnect 1회 제한
+	if (InterlockedExchange8((char*)&target->disconnect_flag, 1) == 1)
+	{
+		if (InterlockedDecrement(&target->io_count) == 0)
+		{
+			Release(target);
+			
+		}
+		return false;
+	}
 
-	//	return false;
-	//}
+	CancelIoEx((HANDLE)target->sock,nullptr);
 
-	//if (release_return == 1)
-	//{
-	//	__int64 plz_send = InterlockedExchange64(&target->release_flag, 2);
-
-	//	if (plz_send == session_ID)
-	//	{
-	//		closesocket(target->sock);
-	//		return true;
-	//	}
-	//}
-
-
-
+	if (InterlockedDecrement(&target->io_count) == 0)
+	{
+		Release(target);
+		return false;
+	}
 
 
 	return false;
@@ -553,51 +532,77 @@ bool LanNetworkLibraryServer::SendPacket(__int64 session_ID, ContentsCPacket sen
 	Session* target;
 	unsigned int i = FindSession(session_ID);
 
-
 	target = &session_array[i];
+	int local_count = InterlockedIncrement(&target->io_count);
 
-
-	AddHeader(send_packet.packet_buffer);
-
-
-	int enqueue_return;
-
-	enqueue_return = target->send_buffer.Enqueue(send_packet.packet_buffer);
-	send_packet.packet_buffer->IncreaseRefCount();
-
-	InterlockedIncrement(&target->send_count);
-
-	if (enqueue_return == false)
+	if ((local_count & RELEASEFLAG) == RELEASEFLAG)
 	{
-		//인큐 불가 상태.
-		wprintf(L"EnqueueFail in SendPacketUnicast Session Id : %lld\n", target->session_id);
-		DebugBreak();
-		//__int64 init_flag = InterlockedCompareExchange64(&target->release_flag, session_ID, 1);
-
-
-		Disconnect(target->session_id); //리턴이 2든 아니든 일단 호출
+		if (InterlockedDecrement(&target->io_count) == 0)
+		{
+			Release(target);
+		}
 		return false;
 	}
 
+	//이러면 해제 이후 다시 재사용 된 상태. 다시 카운트 감소시키고 리턴시키기. 
+	if (target->session_id != session_ID)
+	{
+		//근데 생각해보니 재사용되었고 또 삭제되어야 했을 수도 있음. 
+		//목적과 다른 녀석이지만 얘도 내가 증가시켰으므로 감소 후 지워주기. 
+		if (InterlockedDecrement(&target->io_count) == 0)
+		{
+			Release(target);
+		}
+		return false;
+	}
+
+
+	
+
+
+	//인큐 , Send 
+	AddHeader(send_packet.packet_buffer);
+
+	int enqueue_return = target->send_buffer.Enqueue(send_packet.packet_buffer);
+	send_packet.packet_buffer->IncreaseRefCount();
+	InterlockedIncrement(&target->send_count);
+	if (enqueue_return == false)
+	{
+		wprintf(L"EnqueueFail in SendPacketUnicast Session Id : %lld\n", target->session_id);
+		DebugBreak();
+		//Disconnect(target->session_id); //리턴이 2든 아니든 일단 호출
+		return false;
+	}
 
 	if (!SendPost(target))
 	{
 		return false;
 	}
 
+
+
+	if (InterlockedDecrement(&target->io_count) == 0)
+	{
+		Release(target);
+		return false;
+	}
+
+
 	return false;
 }
 
 bool LanNetworkLibraryServer::SendPost(Session* target)
 {
+
+	if (target->disconnect_flag == 1)
+	{
+		return false;
+	}
+
 	int WSASend_return;
-
-
 
 	if (InterlockedExchange8((char*)&target->send_flag, 1) == 0)
 	{
-
-
 
 		WSABUF local_wsabuf[250];
 
@@ -635,19 +640,30 @@ bool LanNetworkLibraryServer::SendPost(Session* target)
 
 		InterlockedAdd(&send_message_count, target->send_count);
 		InterlockedExchange(&target->send_count, 0);
-		InterlockedIncrement(&target->io_count);
+		
 
 		DWORD sendbytes = 0;
-		
+		InterlockedIncrement(&target->io_count);
 
 
 		ZeroMemory(&target->send_overlapped.overlapped, sizeof(target->send_overlapped.overlapped));
 
 		WSASend_return = WSASend(target->sock, local_wsabuf, buf_count, &sendbytes, 0, &target->send_overlapped.overlapped, NULL);
-		InterlockedIncrement(&send_call);
 		if (WSASend_return == SOCKET_ERROR)
 		{
 			int WSASendError = WSAGetLastError();
+
+			if (WSASendError == WSA_IO_PENDING)
+			{
+
+				if (target->disconnect_flag == 1)
+				{
+					CancelIoEx((HANDLE)target->sock, nullptr);
+					
+				}
+
+			}
+
 			if (WSASendError != WSA_IO_PENDING)
 			{
 
@@ -802,6 +818,13 @@ bool LanNetworkLibraryServer::RecvProc(Session* target)
 
 bool LanNetworkLibraryServer::Receive(Session* target)
 {
+	if (target->disconnect_flag == 1)
+	{
+		return false;
+	}
+
+
+
 	int retval;
 	WSABUF recv_wsabuf[2];
 
@@ -812,14 +835,26 @@ bool LanNetworkLibraryServer::Receive(Session* target)
 
 	DWORD recvbytes;
 	DWORD flags = 0;
+	int WSARecv_error;
 
 	ZeroMemory(&target->recv_overlapped.overlapped, sizeof(target->recv_overlapped.overlapped));
 	InterlockedIncrement(&target->io_count);
 	retval = WSARecv(target->sock, recv_wsabuf, 2, &recvbytes, &flags, &target->recv_overlapped.overlapped, 0);
 	if (retval == SOCKET_ERROR)
 	{
+		WSARecv_error = WSAGetLastError();
+		if (WSARecv_error == WSA_IO_PENDING)
+		{
 
-		int WSARecv_error = WSAGetLastError();
+			if (target->disconnect_flag == 1)
+			{
+				CancelIoEx((HANDLE)target->sock, nullptr);
+			}
+
+			return true;
+
+		}
+		
 		if (WSARecv_error != WSA_IO_PENDING)
 		{
 
@@ -855,6 +890,15 @@ void LanNetworkLibraryServer::Release(Session* target)
 {
 	__int64 is_delete_id = target->session_id;
 
+	//여기서 IO/Count와 릴리즈 플래그를 한 번에 
+	//RELEASEFLAG 사용. 
+
+	if (InterlockedCompareExchange(&target->io_count, RELEASEFLAG , 0) != 0)
+	{
+		return;
+	}
+
+
 	for(int i = 0; i < target->buffer_count.count; ++i)
 	{
 		if (target->buffer_count.buffers[i]->DecreaseRefCount() == 0)
@@ -867,35 +911,17 @@ void LanNetworkLibraryServer::Release(Session* target)
 
 
 	target->buffer_count.count = 0;
-	closesocket(target->sock);
-
 	target->recv_buffer.ClearBuffer();
 
-	while (1)
-	{
-		CPacket* t;
+	ClearSendBuffer(target);
+	closesocket(target->sock);
 
-		if (target->send_buffer.Dequeue(&t) == false)
-		{
-			break;
-		}
+	
 
-		if (t->DecreaseRefCount() == 0)
-		{
-
-			CPacket::Free(t);
-
-		}
-
-	}
-
-	//target->send_buffer.ClearBuffer();
-
-
+	
 
 	index_list.Free(target->index);
 
-	InterlockedExchange8((char*)&target->use_flag, 0);
 	InterlockedDecrement(&session_num);
 
 	OnRelease(is_delete_id);
@@ -916,26 +942,22 @@ int* LanNetworkLibraryServer::FindEmptySessionPTR()
 
 }
 
-int LanNetworkLibraryServer::FindEmptySession()
+void LanNetworkLibraryServer::ClearSendBuffer(Session* target)
 {
-	Profile a(L"Find Empty Session");
-
-
-	int i = 0;
-	for (i = 0; i < (int)max_session; ++i)
+	while (1)
 	{
-		if (session_array[i].use_flag == 0)
+		CPacket* t;
+
+		if (target->send_buffer.Dequeue(&t) == false)
 		{
-			return i;
+			break;
 		}
-
+		if (t->DecreaseRefCount() == 0)
+		{
+			CPacket::Free(t);
+		}
 	}
-	if (i == max_session)
-	{
-		__debugbreak();
-	}
 
-	return 0;
 }
 
 int LanNetworkLibraryServer::FindSession(__int64 session_ID)

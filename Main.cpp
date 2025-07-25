@@ -58,8 +58,6 @@ int main()
 	EchoServer echo_instance;
 	echo_instance.Start(ThreadData[IP], atoi(ThreadData[PORT]), atoi(ThreadData[THREADS]), atoi(ThreadData[CONCURRENT]), atoi(ThreadData[NAGLE]), atoi(ThreadData[SESSIONS]), atoi(ThreadData[HEADERSIZE]));
 
-	
-
 	char start_key = _getch();
 	wprintf(L"TPS Counting Start");
 
@@ -99,13 +97,6 @@ int main()
 	}
 
 	Sleep(INFINITE);
-
-
-
-
-
-	//Sleep(INFINITE);
-
 
 
 	ParseThreadDataFile(FILENAME);
@@ -175,10 +166,6 @@ bool ParseThreadDataFile(const char* file_name)
 				break;
 			}
 		}
-
-
-
-
 		
 		int Index = 0;
 
@@ -204,15 +191,10 @@ bool ParseThreadDataFile(const char* file_name)
 			}
 		}
 
-
-
 		free(file_buffer);
 
 		fclose(worker_information);
 	}
-
-
-
 
 
 	return true;
@@ -308,53 +290,6 @@ void SaveTPS(EchoServer* echo_instance)
 			std::to_wstring(min_send_message_TPS).c_str(),
 			std::to_wstring(max_send_message_TPS).c_str(),
 			std::to_wstring(TPS_count).c_str());
-
-		fwprintf(TPS_file,
-			L"%20s  %20s  %10s\n",
-			L"recv_time",
-			std::to_wstring((double)(echo_instance->recv_time) / (echo_instance->recv_call) / Freq.QuadPart * 1000000).c_str(),
-			std::to_wstring(echo_instance->recv_call).c_str());
-		
-		fwprintf(TPS_file,
-			L"%20s  %20s  %10s\n",
-			L"send_proc",
-			std::to_wstring((double)(echo_instance->send_proc_time) / (echo_instance->send_proc_call) / Freq.QuadPart * 1000000).c_str(),
-			std::to_wstring(echo_instance->send_proc_call).c_str());
-
-		fwprintf(TPS_file,
-			L"%20s  %20s  %10s\n",
-			L"send_call",
-			std::to_wstring((double)(echo_instance->send_call_time) / (echo_instance->send_call) / Freq.QuadPart * 1000000).c_str(),
-			std::to_wstring(echo_instance->send_call).c_str());
-
-		fwprintf(TPS_file,
-			L"%20s  %20s  %10s\n",
-			L"alloc",
-			std::to_wstring((double)(echo_instance->alloc_call_time) / (echo_instance->alloc_call) / Freq.QuadPart * 1000000).c_str(),
-			std::to_wstring(echo_instance->alloc_call).c_str());
-
-		fwprintf(TPS_file,
-			L"%20s  %20s  %10s\n",
-			L"free",
-			std::to_wstring((double)(echo_instance->free_call_time) / (echo_instance->free_call) / Freq.QuadPart * 1000000).c_str(),
-			std::to_wstring(echo_instance->free_call).c_str());
-
-		for (int i = 0; i < 200; i++)
-		{
-			if (echo_instance->buf_count_total[i][0] == 0)
-			{
-				continue;
-			}
-
-			fwprintf(TPS_file,
-				L"%20s  %20s  %10s\n",
-				std::to_wstring(i).c_str(),
-				std::to_wstring((double)(echo_instance->buf_count_total[i][1]) / (echo_instance->buf_count_total[i][0]) / Freq.QuadPart * 1000000).c_str(),
-				std::to_wstring(echo_instance->buf_count_total[i][0]).c_str());
-
-
-		}
-
 
 
 		fwprintf(TPS_file, L"---------------------------------------------------------------------------------------------------------------------\n");

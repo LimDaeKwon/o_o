@@ -38,11 +38,10 @@ public:
 	void Release(Session* target);
 
 
-	void ReleasePTR(Session* target);
-
-	int FindEmptySession();
 	int FindSession(__int64 session_ID);
 	int* FindEmptySessionPTR();
+
+	void ClearSendBuffer(Session* target);
 
 
 	static unsigned int WINAPI AcceptThread(LPVOID this_ptr);
@@ -76,20 +75,6 @@ public:
 	unsigned int threads_num;
 	__int64 unique_id;
 
-	__int64 recv_time;
-	unsigned int recv_call;
-
-	__int64 send_proc_time;
-	unsigned int send_proc_call;
-
-	__int64 send_call_time;
-	unsigned int send_call;
-
-	__int64 alloc_call_time;
-	unsigned int alloc_call;
-
-	__int64 free_call_time;
-	unsigned int free_call;
 
 	__int64 buf_count_total[200][2];
 
