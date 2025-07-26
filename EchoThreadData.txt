@@ -1,8 +1,0 @@
-StartParamForEcho
-ip:127.0.0.1
-port:6000
-worker_num:8
-concurrent:4
-option:0
-sessions:1000
-EndParamForEcho
